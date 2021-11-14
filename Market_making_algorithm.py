@@ -166,9 +166,9 @@ def update_quotes(callput, option_id, theoretical_price, credit, volume, positio
         bid_price = bid_price
         ask_price = ask_price
     else:
-        best_bid = round(float(book.bids[0].price),2)
+        best_bid = round(float(book.bids[0].price),1)
         print("best_bid: ", best_bid)
-        best_ask = round(float(book.asks[0].price),2)
+        best_ask = round(float(book.asks[0].price),1)
         print("best_ask: ", best_ask)
         if best_bid > bid_price or bid_price > ask_price:
             if best_bid + 0.1 < best_ask - 0.1:
@@ -182,7 +182,7 @@ def update_quotes(callput, option_id, theoretical_price, credit, volume, positio
                 ask_price = best_ask
     
     
-    if round(bid_price,2) == round(ask_price,2):
+    if round(bid_price,1) == round(ask_price,1):
         if best_bid != best_ask:
             bid_price = best_bid
             ask_price = best_ask
