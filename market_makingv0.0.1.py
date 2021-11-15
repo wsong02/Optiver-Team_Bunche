@@ -133,6 +133,8 @@ def update_quotes(callput, option_id, theoretical_price, credit, volume, positio
     """
 
     # Print any new trades
+    
+        
     trades = exchange.poll_new_trades(instrument_id=option_id)
     for trade in trades:
         print(f'- Last period, traded {trade.volume} lots in {option_id} at price {trade.price:.2f}, side: {trade.side}.')
@@ -149,50 +151,105 @@ def update_quotes(callput, option_id, theoretical_price, credit, volume, positio
         elif order.side == 'bid':
             old_bid_volume = order.volume
         exchange.delete_order(instrument_id=option_id, order_id=order_id)
+    
+    if old_bid_volume > 20:
+        old_bid_volume = 20
+    if old_ask_volume > 20:
+        old_ask_volume = 20
 
     # Calculate bid and ask price
     bid_price = round_down_to_tick(theoretical_price - credit, tick_size)
     ask_price = round_up_to_tick(theoretical_price + credit, tick_size)
     
-    if bid_price == ask_price:
-        coin_flip = random.randint(0,1)
-        if coin_flip == 0:
-            bid_price += 0.1
-        else:
-            ask_price -= 0.1
-
+    book = exchange.get_last_price_book(option_id)
+    if not book.bids or not book.asks:
+        bid_price = bid_price
+        ask_price = ask_price
+    else:
+        best_bid = round(float(book.bids[0].price),1)
+        print("best_bid: ", best_bid)
+        best_ask = round(float(book.asks[0].price),1)
+        print("best_ask: ", best_ask)
+        if best_bid > bid_price or bid_price > ask_price:
+            if best_bid + 0.1 < best_ask - 0.1:
+                bid_price = best_bid + 0.1
+            else:
+                bid_price = best_bid
+        if best_ask < ask_price or ask_price < bid_price:
+            if best_ask - 0.1 > best_bid +0.1:
+                ask_price = best_ask - 0.1
+            else:
+                ask_price = best_ask
+    
+    
+        if round(bid_price,1) == round(ask_price,1):
+            if best_bid != best_ask:
+                bid_price = best_bid
+                ask_price = best_ask
+            elif best_bid == best_ask:
+                bid_price = best_bid - 0.1
+                ask_price = best_ask + 0.1
     # Calculate bid and ask volumes, taking into account the provided position_limit
     position = exchange.get_positions()[option_id]
+    
+    if position > position_limit*0.5 or position < -position_limit*0.5:
+        if position > 0:
+            max_volume_to_buy = volume
+            max_volume_to_sell = position + 2*volume
+        else:
+            max_volume_to_buy = 2*volume - position
+            max_volume_to_sell = volume
+    else:
+        max_volume_to_buy = position_limit - position
+        max_volume_to_sell = position_limit + position
+    
 
-    max_volume_to_buy = position_limit - position
-    max_volume_to_sell = position_limit + position
-    
-    
-    total_ask_volume = volume
-    total_bid_volume = volume
-    if position > 0:
-        total_ask_volume = volume + old_ask_volume
-    elif position <0:
-        total_bid_volume = volume + old_bid_volume
-    
     bid_volume = min(volume+old_bid_volume, max_volume_to_buy)
     ask_volume = min(volume+old_ask_volume, max_volume_to_sell)
     
     # Insert new limit orders
     if callput == "call":
         if bid_volume > 0 and not trade_would_breach_position_limit(option_id, volume, 'bid',position_limit = position_limit) and not force_delta_decrease:
+            
             print(f'- Inserting bid limit order in {option_id} for {bid_volume} @ {bid_price:8.2f}.')
-            exchange.insert_order(instrument_id=option_id, price=bid_price, volume=bid_volume, side='bid', order_type='limit', )
+            exchange.insert_order(instrument_id=option_id, 
+                                  price=bid_price, 
+                                  volume=bid_volume, 
+                                  side='bid', 
+                                  order_type='limit', 
+                                  )
+            
         if ask_volume > 0 and not trade_would_breach_position_limit(option_id, volume, 'ask',position_limit = position_limit) and not force_delta_increase:
+            
             print(f'- Inserting ask limit order in {option_id} for {ask_volume} @ {ask_price:8.2f}.')
-            exchange.insert_order(instrument_id=option_id, price=ask_price, volume=ask_volume, side='ask', order_type='limit', )
+            exchange.insert_order(instrument_id=option_id, 
+                                  price=ask_price, 
+                                  volume=ask_volume, 
+                                  side='ask', 
+                                  order_type='limit', 
+                                  )
+            
     elif callput == "put":
+        
         if bid_volume > 0 and not trade_would_breach_position_limit(option_id, volume, 'bid',position_limit = position_limit) and not force_delta_increase:
+            
             print(f'- Inserting bid limit order in {option_id} for {bid_volume} @ {bid_price:8.2f}.')
-            exchange.insert_order(instrument_id=option_id, price=bid_price, volume=bid_volume, side='bid', order_type='limit', )
+            exchange.insert_order(instrument_id=option_id, 
+                                  price=bid_price, 
+                                  volume=bid_volume, 
+                                  side='bid', 
+                                  order_type='limit', 
+                                  )
+            
         if ask_volume > 0 and not trade_would_breach_position_limit(option_id, volume, 'ask',position_limit = position_limit) and not force_delta_decrease:
+            
             print(f'- Inserting ask limit order in {option_id} for {ask_volume} @ {ask_price:8.2f}.')
-            exchange.insert_order(instrument_id=option_id, price=ask_price, volume=ask_volume, side='ask', order_type='limit', )
+            exchange.insert_order(instrument_id=option_id, 
+                                  price=ask_price, 
+                                  volume=ask_volume, 
+                                  side='ask', 
+                                  order_type='limit', 
+                                  )
 
 
 def hedge_delta_position(stock_id, options, stock_value):
@@ -214,13 +271,13 @@ def hedge_delta_position(stock_id, options, stock_value):
     positions = exchange.get_positions()
     
     total_delta_position = 0
-
     book = exchange.get_last_price_book(stock_id)
     if not book.bids or not book.asks:
         return
     else:
         best_bid = float(book.bids[0].price)
         best_ask = float(book.asks[0].price)
+        
     for option in options:
       if option['callput'] == 'put':
         position = positions[option['id']]
@@ -250,7 +307,16 @@ def hedge_delta_position(stock_id, options, stock_value):
     print(f'- The current position in the stock {stock_id} is {stock_position}.')
 
     # A4: Implement the delta hedge here, staying mindful of the overall position-limit of 100, also for the stocks.
-     
+    
+    book = exchange.get_last_price_book(stock_id)
+    if not book.bids or not book.asks:
+        return
+    else:
+        best_bid = float(book.bids[0].price)
+        best_ask = float(book.asks[0].price)
+    
+    
+    
     volume = int(round(total_delta_position,0)) + stock_position
     
     delta_pos = float(total_delta_position)
@@ -274,7 +340,7 @@ def hedge_delta_position(stock_id, options, stock_value):
     print("stock_position: ", stock_position)
     print("net_delta: ", (delta_pos + stock_position))
     
-    if delta_pos + stock_position > 20 or delta_pos + stock_position < -20:
+    if delta_pos + stock_position > 15 or delta_pos + stock_position < -15 or force_delta_decrease or force_delta_increase:
         
         if not trade_would_breach_position_limit(stock_id, volume, side) and volume != 0:
             print(f'''Inserting IOC {side} for {stock_id}: {volume:.0f} lot(s) at price {hedge_price:.2f}.''')
@@ -291,26 +357,51 @@ def hedge_delta_position(stock_id, options, stock_value):
         print(f'- Not hedging.')
     return (delta_pos + stock_position)
     
+    
+def options_delta_calc(options_list):
+    delta_sum = 0
+    for option in options_list:
+        time_to_expiry = calculate_current_time_to_date(option['expiry_date'])
+        strike = option['strike']
+        interest_rate = 0.0
+        volatility = 3.0
+        if option['callput'] == 'call':
+            option_delta = call_delta(S=stock_value, K=strike, T=time_to_expiry, r=interest_rate, sigma=volatility)
+        elif option['callput'] == 'put':
+            option_delta = put_delta(S=stock_value, K=strike, T=time_to_expiry, r=interest_rate, sigma=volatility)
+        option['delta'] = option_delta
+        delta_sum += option_delta
+        
+    delta_sum = round(delta_sum,2)    
+    
+    if delta_sum < 0:
+        delta_sum += 0.8
+    elif delta_sum > 0:
+        delta_sum -= 0.8
 
+    if delta_sum > 0:
+        return 'positive', delta_sum
+    elif delta_sum < 0:
+        return 'negative', delta_sum
 
 
 # A2: Not all the options have been entered here yet, include all of them for an easy improvement
-
+bid_count = 0
 
 STOCK_ID = 'BMW'
 OPTIONS = [
-    {'id': 'BMW-2021_12_10-050C', 'expiry_date': dt.datetime(2021, 12, 10, 12, 0, 0), 'strike': 50, 'callput': 'call', 'last_ask': 0.0, 'last_bid': 0.0},
-    {'id': 'BMW-2021_12_10-050P', 'expiry_date': dt.datetime(2021, 12, 10, 12, 0, 0), 'strike': 50, 'callput': 'put', 'last_ask': 0.0, 'last_bid': 0.0},
-    {'id': 'BMW-2022_01_14-050C', 'expiry_date': dt.datetime(2022,  1, 14, 12, 0, 0), 'strike': 50, 'callput': 'call', 'last_ask': 0.0, 'last_bid': 0.0},
-    {'id': 'BMW-2022_01_14-050P', 'expiry_date': dt.datetime(2022,  1, 14, 12, 0, 0), 'strike': 50, 'callput': 'put', 'last_ask': 0.0, 'last_bid': 0.0},
-    {'id': 'BMW-2021_12_10-075C', 'expiry_date': dt.datetime(2021, 12, 10, 12, 0, 0), 'strike': 75, 'callput': 'call', 'last_ask': 0.0, 'last_bid': 0.0},
-    {'id': 'BMW-2021_12_10-075P', 'expiry_date': dt.datetime(2021, 12, 10, 12, 0, 0), 'strike': 75, 'callput': 'put', 'last_ask': 0.0, 'last_bid': 0.0},
-    {'id': 'BMW-2022_01_14-075C', 'expiry_date': dt.datetime(2022,  1, 14, 12, 0, 0), 'strike': 75, 'callput': 'call', 'last_ask': 0.0, 'last_bid': 0.0},
-    {'id': 'BMW-2022_01_14-075P', 'expiry_date': dt.datetime(2022,  1, 14, 12, 0, 0), 'strike': 75, 'callput': 'put', 'last_ask': 0.0, 'last_bid': 0.0},
-    {'id': 'BMW-2021_12_10-100C', 'expiry_date': dt.datetime(2021, 12, 10, 12, 0, 0), 'strike': 100, 'callput': 'call', 'last_ask': 0.0, 'last_bid': 0.0},
-    {'id': 'BMW-2021_12_10-100P', 'expiry_date': dt.datetime(2021, 12, 10, 12, 0, 0), 'strike': 100, 'callput': 'put', 'last_ask': 0.0, 'last_bid': 0.0},
-    {'id': 'BMW-2022_01_14-100C', 'expiry_date': dt.datetime(2022,  1, 14, 12, 0, 0), 'strike': 100, 'callput': 'call', 'last_ask': 0.0, 'last_bid': 0.0},
-    {'id': 'BMW-2022_01_14-100P', 'expiry_date': dt.datetime(2022,  1, 14, 12, 0, 0), 'strike': 100, 'callput': 'put', 'last_ask': 0.0, 'last_bid': 0.0},
+    {'id': 'BMW-2021_12_10-050C', 'expiry_date': dt.datetime(2021, 12, 10, 12, 0, 0), 'strike':  50, 'callput': 'call', 'last_ask': 0.0, 'last_bid': 0.0, 'delta': 0.0, 'position_limit': 100},
+    {'id': 'BMW-2021_12_10-050P', 'expiry_date': dt.datetime(2021, 12, 10, 12, 0, 0), 'strike':  50, 'callput': 'put',  'last_ask': 0.0, 'last_bid': 0.0, 'delta': 0.0, 'position_limit': 100},
+    {'id': 'BMW-2022_01_14-050C', 'expiry_date': dt.datetime(2022,  1, 14, 12, 0, 0), 'strike':  50, 'callput': 'call', 'last_ask': 0.0, 'last_bid': 0.0, 'delta': 0.0, 'position_limit': 100},
+    {'id': 'BMW-2022_01_14-050P', 'expiry_date': dt.datetime(2022,  1, 14, 12, 0, 0), 'strike':  50, 'callput': 'put',  'last_ask': 0.0, 'last_bid': 0.0, 'delta': 0.0, 'position_limit': 100},
+    {'id': 'BMW-2021_12_10-075C', 'expiry_date': dt.datetime(2021, 12, 10, 12, 0, 0), 'strike':  75, 'callput': 'call', 'last_ask': 0.0, 'last_bid': 0.0, 'delta': 0.0, 'position_limit': 100},
+    {'id': 'BMW-2021_12_10-075P', 'expiry_date': dt.datetime(2021, 12, 10, 12, 0, 0), 'strike':  75, 'callput': 'put',  'last_ask': 0.0, 'last_bid': 0.0, 'delta': 0.0, 'position_limit': 100},
+    {'id': 'BMW-2022_01_14-075C', 'expiry_date': dt.datetime(2022,  1, 14, 12, 0, 0), 'strike':  75, 'callput': 'call', 'last_ask': 0.0, 'last_bid': 0.0, 'delta': 0.0, 'position_limit': 100},
+    {'id': 'BMW-2022_01_14-075P', 'expiry_date': dt.datetime(2022,  1, 14, 12, 0, 0), 'strike':  75, 'callput': 'put',  'last_ask': 0.0, 'last_bid': 0.0, 'delta': 0.0, 'position_limit': 100},
+    {'id': 'BMW-2021_12_10-100C', 'expiry_date': dt.datetime(2021, 12, 10, 12, 0, 0), 'strike': 100, 'callput': 'call', 'last_ask': 0.0, 'last_bid': 0.0, 'delta': 0.0, 'position_limit': 100},
+    {'id': 'BMW-2021_12_10-100P', 'expiry_date': dt.datetime(2021, 12, 10, 12, 0, 0), 'strike': 100, 'callput': 'put',  'last_ask': 0.0, 'last_bid': 0.0, 'delta': 0.0, 'position_limit': 100},
+    {'id': 'BMW-2022_01_14-100C', 'expiry_date': dt.datetime(2022,  1, 14, 12, 0, 0), 'strike': 100, 'callput': 'call', 'last_ask': 0.0, 'last_bid': 0.0, 'delta': 0.0, 'position_limit': 100},
+    {'id': 'BMW-2022_01_14-100P', 'expiry_date': dt.datetime(2022,  1, 14, 12, 0, 0), 'strike': 100, 'callput': 'put',  'last_ask': 0.0, 'last_bid': 0.0, 'delta': 0.0, 'position_limit': 100},
 ]
 
 
@@ -333,11 +424,39 @@ while True:
 
     stock_value = get_midpoint_value(STOCK_ID)
     
+    delta_sign, delta_sum = options_delta_calc(OPTIONS)
+    
+    if delta_sign == 'positive':
+        delta_position_change = int(round(delta_sum/6,0)*100)
+        for option in OPTIONS:
+            if option['delta'] > 0:
+                option['position_limit'] -= delta_position_change
+                delta_sum -= delta_position_change
+    elif delta_sign == 'negative':
+        delta_position_change = int(round(delta_sum/6,0)*100)
+        for option in OPTIONS:
+            if option['delta'] < 0:
+                option['position_limit'] += delta_position_change
+                delta_sum -= delta_position_change
+    
     if stock_value is None:
         print('Empty stock order book on bid or ask-side, or both, unable to update option prices.')
         time.sleep(4)
         continue
-
+    
+    book_BMW = exchange.get_last_price_book(STOCK_ID)
+    best_ask_BMW = round(float(book_BMW.asks[0].price),1)
+    best_bid_BMW = round(float(book_BMW.bid[0].price),1)
+    
+    max_delta = 0.0
+    for option in OPTIONS:
+        if option['delta'] < 0:
+            if (-option['delta']) > max_delta:
+                max_delta = -option['delta']
+        else:
+            if option['delta'] > max_delta:
+                max_delta = option['delta']
+    
     for option in OPTIONS:
         
         trades = exchange.poll_new_trades(option['id'])
@@ -363,8 +482,9 @@ while True:
         callput = option['callput']
         interest_rate = 0.0
         volatility = 3.0
+        option_limit = option['position_limit']
         
-        option_limit = limit_maker_man(strike,stock_value)
+        
 
         theoretical_value = calculate_theoretical_option_value(expiry_date=expiry_date,
                                                                strike=strike,
@@ -419,21 +539,28 @@ while True:
         positions = exchange.get_positions()
         position = positions[option['id']]
         
-        print(best_bid_vol, best_ask_vol, position)
+        
         
         if credit1 > credit2:
             credit = credit2
         elif credit1 < credit2:
             credit = credit1     
         
+        
+        delta_multiplier = option_delta/max_delta
+        
+        if delta_multiplier < 0:
+            delta_multiplier = -delta_multiplier
+        
+        credit = credit*0.4 + 0.6*credit*delta_multiplier
         # A5: Here we are inserting a volume of 3, only taking into account the position limit of 100, are there better
         #  choices?
-        print(f'{option} limit is {option_limit}.')
+        print(f"{option['id']} limit is {option_limit}.")
         update_quotes(callput=option['callput'],
                       option_id=option['id'],
                       theoretical_price=theoretical_value,
                       credit=credit,
-                      volume=10,
+                      volume=20,
                       position_limit=option_limit,
                       tick_size=0.10)
 
@@ -443,10 +570,7 @@ while True:
 
     print(f'\nHedging delta position')
     
-  
-
     net_delta = hedge_delta_position(STOCK_ID, OPTIONS, stock_value)
-    
     stock_position = positions[STOCK_ID]
     print(stock_position)
     if stock_position >= 80:
@@ -462,5 +586,5 @@ while True:
         print("force_delta_increase = False confirmed.")
         force_delta_increase = False
     
-    print(f'Sleeping for 1 second.')
-    time.sleep(1)
+    print(f'Sleeping for 2 seconds.')
+    time.sleep(2)
